@@ -1,0 +1,29 @@
+# Single source of truth for all random seeds used in this project.
+# Every training/evaluation script must import seeds from here — do not
+# hardcode seed values elsewhere.
+
+# Used for: linear probe, baseline, data augmentation, ImageNet transfer
+# learning. All of these are cheap enough to repeat 3x.
+downstream_seeds:
+  - 42
+  - 123
+  - 999
+
+# Used for: SimSiam encoder pretraining only. Single seed due to compute
+# cost (multi-day training on 4GB VRAM laptop GPU) — see
+# docs/PROJECT_DOCUMENTATION.md, Section 11 (Limitations) for justification.
+pretraining_seed: 42
+
+# Label percentages used for every downstream evaluation strategy.
+label_percentages:
+  - 1
+  - 5
+  - 10
+  - 20
+  - 50
+  - 100
+
+# Fixed subsampling seed for the label-percentage splits themselves, kept
+# separate from training seeds so subsampling noise and training/init noise
+# aren't conflated (see Limitations, Section 11).
+subsample_split_seed: 7

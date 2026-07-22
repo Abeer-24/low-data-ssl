@@ -1,0 +1,28 @@
+# Weights & Biases configuration.
+# API key is NOT stored here — set it via `wandb login` locally or the
+# WANDB_API_KEY environment variable. This file only holds non-secret,
+# shareable project settings.
+
+project: lowdata-ssl
+entity: null  # set to your W&B username or team, or leave null for default
+
+# Tags applied to every run, to make filtering in the W&B UI easy across
+# backbone / strategy / label-percentage combinations.
+default_tags:
+  - stl10
+  - low-data-regime
+
+# Metrics tracked per run (see docs/PROJECT_DOCUMENTATION.md, Section 6 —
+# Experiment tracking).
+tracked_metrics:
+  - training_loss
+  - validation_accuracy
+  - learning_rate
+  - gpu_memory_mb
+  - epoch_duration_sec
+
+# Naming convention for run names, so 144 downstream runs stay identifiable
+# in the W&B dashboard without opening each one.
+# Format: {backbone}_{strategy}_{label_pct}pct_seed{seed}
+# Example: resnet18_simsiam_linearprobe_10pct_seed123
+run_name_template: "{backbone}_{strategy}_{label_pct}pct_seed{seed}"
