@@ -32,6 +32,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "data"))
 from stl10_loader import get_stl10_splits, load_seed_config, make_label_percentage_subsets, DATA_ROOT
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "downstream")
+DEPLOY_CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "deploy")
 
 NUM_CLASSES = 10  # STL-10
 
@@ -91,7 +92,7 @@ class TransformWrapper(torch.utils.data.Dataset):
 # ---------------------------------------------------------------------------
 
 def train_and_evaluate(subset, test_dataset, backbone_name, seed, device,
-                        epochs=20, batch_size=64, lr=0.0005):
+                        epochs=20, batch_size=64, lr=0.0005, return_model=False):
     # Fewer epochs and lower LR than baseline/augmented -- fine-tuning a
     # pretrained model converges faster and can overfit quickly with a
     # from-scratch-sized LR, especially on very small subsets.
@@ -130,7 +131,10 @@ def train_and_evaluate(subset, test_dataset, backbone_name, seed, device,
             correct += (preds == labels).sum().item()
             total += labels.size(0)
 
-    return correct / total
+    accuracy = correct / total
+    if return_model:
+        return accuracy, model
+    return accuracy
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +165,32 @@ def run_imagenet_transfer(backbone_name: str):
         for seed in downstream_seeds:
             subset = subsets_by_seed[seed][pct]
             start = time.time()
-            acc = train_and_evaluate(subset, test, backbone_name, seed, device)
+
+            # Save the deployment checkpoint from the 100% split, first seed
+            # only -- this is the actual model chosen for deployment
+            # (Section 11.6 of PROJECT_DOCUMENTATION.md), trained on the
+            # full labeled set. We don't save all 18 models per backbone;
+            # only this one matters for Grad-CAM/ONNX export/the Gradio app.
+            should_save = (pct == 100 and seed == downstream_seeds[0])
+            if should_save:
+                acc, model = train_and_evaluate(
+                    subset, test, backbone_name, seed, device, return_model=True
+                )
+                os.makedirs(DEPLOY_CHECKPOINT_DIR, exist_ok=True)
+                deploy_path = os.path.join(
+                    DEPLOY_CHECKPOINT_DIR, f"{backbone_name}_imagenet_transfer_deploy.pt"
+                )
+                torch.save({
+                    "model_state": model.state_dict(),
+                    "backbone": backbone_name,
+                    "strategy": "imagenet_transfer",
+                    "label_pct": pct,
+                    "seed": seed,
+                }, deploy_path)
+                print(f"  Deployment checkpoint saved: {deploy_path}")
+            else:
+                acc = train_and_evaluate(subset, test, backbone_name, seed, device)
+
             duration = time.time() - start
             accuracies.append(acc)
             print(f"  seed={seed} ({len(subset)} images): accuracy={acc:.4f} ({duration:.1f}s)")
