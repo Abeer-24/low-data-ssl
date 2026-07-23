@@ -209,12 +209,15 @@ bolted on afterward.
   comparisons — kept as static images in documentation to avoid extra
   inference-time compute and failure modes in production.
 
-**Final model choice (locked in after results, see Section 11.5):
+**Final model choice (locked in after results, see Section 11.6):
 MobileNetV2, fine-tuned from ImageNet weights.** It was the most accurate
 combination at every label percentage tested across all 8 backbone ×
-strategy combinations, and it is also the smallest and fastest backbone in
-the study — the accuracy and efficiency goals pointed to the same answer,
-so no tradeoff had to be made between them.
+strategy combinations, and it has the smallest model size/download
+footprint. It is not the fastest option on this study's GPU -- ResNet18
+is roughly 2x faster per image at inference (Section 11.5) -- but for a
+small interactive demo, sub-10ms inference on either backbone is well
+within acceptable latency, so accuracy and size were weighted more
+heavily than the speed difference.
 
 ---
 
@@ -341,13 +344,40 @@ pretraining on unlabeled data, not merely better regularization. This
 contribution grows at higher label percentages (~45% of the gap closed at
 100%) -- the opposite of where SSL's advantage matters most.
 
-### 11.5 Deployment decision
+### 11.5 Efficiency (architecture-only -- same for every strategy)
 
-**Chosen for deployment: MobileNetV2, fine-tuned from ImageNet weights**,
-per Section 11.2 -- it is simultaneously the most accurate combination
-across all label percentages tested and the smallest/fastest backbone in
-the study, satisfying both the accuracy and "effortless deployment"
-constraints from Section 8 without compromise on either.
+Measured on the study's hardware (RTX 3050 Laptop GPU), single-image
+inference, 96×96 input:
+
+| Model | Params | Size (MB) | Inference Time | FPS |
+|---|---|---|---|---|
+| ResNet18 | 11.18M | 42.73 MB | 4.04 ms | 247.3 |
+| MobileNetV2 | 2.24M | **8.76 MB** | 8.25 ms | 121.2 |
+
+**Counterintuitive result, stated plainly:** MobileNetV2 is ~5x smaller
+but roughly **2x slower** than ResNet18 on this GPU. This is not a bug --
+MobileNetV2's depthwise separable convolutions are optimized for FLOP
+count and mobile/CPU deployment, but involve many small sequential
+operations that parallelize less efficiently on GPU hardware than
+ResNet18's larger, cuDNN-optimized standard convolutions, especially at
+batch size 1. "Fewer parameters" does not automatically mean "faster" --
+the answer is hardware-dependent. On a CPU-only deployment target (e.g.
+Hugging Face Spaces' free tier), this comparison could plausibly reverse,
+since depthwise separable convolutions often do win on CPU. This was not
+verified in this study and is noted as a gap, not assumed.
+
+### 11.6 Deployment decision
+
+**Chosen for deployment: MobileNetV2, fine-tuned from ImageNet weights.**
+This is the most accurate combination across all label percentages tested
+(Section 11.2) and has the smallest model size/download footprint (Section
+11.5) -- but it is not the fastest inference option on this study's GPU,
+where ResNet18 is roughly 2x faster per image. The choice prioritizes
+accuracy and deployment size over raw GPU inference speed, which is an
+explicit tradeoff, not an oversight: for a small classification demo
+served via Gradio, sub-10ms inference on either model is well within
+acceptable latency for interactive use, so accuracy and download size were
+weighted more heavily than the speed difference.
 
 ---
 

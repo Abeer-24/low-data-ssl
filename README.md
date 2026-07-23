@@ -25,6 +25,21 @@ backbone (MobileNetV2) fine-tuned from free ImageNet weights.
 Full 2-backbone × 4-strategy comparison table in
 [`PROJECT_DOCUMENTATION.md`, Section 11](./PROJECT_DOCUMENTATION.md#11-results-both-backbones).
 
+## Efficiency
+
+| Model | Params | Size (MB) | Inference Time | FPS |
+|---|---|---|---|---|
+| ResNet18 | 11.18M | 42.73 MB | 4.04 ms | 247.3 |
+| MobileNetV2 | 2.24M | **8.76 MB** | 8.25 ms | 121.2 |
+
+MobileNetV2 is ~5x smaller but roughly **2x slower** on this study's GPU
+(RTX 3050) — depthwise separable convolutions parallelize less efficiently
+on GPU hardware than ResNet18's standard convolutions at batch size 1,
+despite having far fewer parameters. The deployed model (MobileNetV2 +
+ImageNet transfer) was chosen for accuracy and size, not GPU speed — see
+[Section 11.6](./PROJECT_DOCUMENTATION.md#116-deployment-decision) for the
+full reasoning.
+
 ## Dataset
 
 [STL-10](https://ai.stanford.edu/~acoates/stl10/) — 100,000 unlabeled
@@ -42,7 +57,8 @@ downstream training, 8,000 labeled images for evaluation. 96×96 resolution,
 
 ## Backbones
 
-ResNet18 (~11M params), MobileNetV2 (~3.4M params)
+ResNet18 (11.18M params), MobileNetV2 (2.24M params) -- see
+[Efficiency](#efficiency) above for exact measurements.
 
 ## Project structure
 
