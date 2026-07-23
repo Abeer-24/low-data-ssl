@@ -1,0 +1,2 @@
+Upload an image,Prediction,timestamp
+.gradio\flagged\Upload an image\1bd5c716c1e9c067315d\WhatsApp Image 2026-07-23 at 10.57.43 AM.jpeg,"{""label"": ""monkey"", ""confidences"": [{""label"": ""monkey"", ""confidence"": 0.62586909532547}, {""label"": ""car"", ""confidence"": 0.17079398036003113}, {""label"": ""bird"", ""confidence"": 0.07070233672857285}, {""label"": ""dog"", ""confidence"": 0.06413796544075012}, {""label"": ""cat"", ""confidence"": 0.04006818309426308}]}",2026-07-23 10:58:41.763773

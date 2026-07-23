@@ -14,6 +14,7 @@ raw_data/
 checkpoints/simsiam/*.pt
 checkpoints/downstream/*.pt
 checkpoints/deploy/*.pt
+checkpoints/deploy/*.onnx
 
 # Weights & Biases local run logs -- large, regenerated on every run,
 # and results already synced to wandb.ai / saved as JSON separately.
