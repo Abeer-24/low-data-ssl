@@ -16,6 +16,11 @@ checkpoints/downstream/*.pt
 checkpoints/deploy/*.pt
 checkpoints/deploy/*.onnx
 
+# Exception: render_deploy/ needs its own copy of the ONNX model committed,
+# since Render.com deploys by pulling from the GitHub repo directly (no
+# separate file upload step like Hugging Face Spaces has).
+!render_deploy/*.onnx
+
 # Weights & Biases local run logs -- large, regenerated on every run,
 # and results already synced to wandb.ai / saved as JSON separately.
 wandb/
