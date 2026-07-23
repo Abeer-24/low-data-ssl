@@ -40,6 +40,14 @@ ImageNet transfer) was chosen for accuracy and size, not GPU speed — see
 [Section 11.6](./PROJECT_DOCUMENTATION.md#116-deployment-decision) for the
 full reasoning.
 
+**Note on out-of-distribution inputs:** the deployed app always predicts
+one of the 10 trained classes, with no "none of the above" option — OOD
+detection was explicitly cut from scope (see
+[Section 10](./PROJECT_DOCUMENTATION.md#10-scope-decisions-what-was-deliberately-cut-and-why)).
+In informal testing, images of people were confidently classified as
+"dog" or "monkey" — expected behavior for a classifier with no OOD
+awareness, not a bug.
+
 ## Explainability (Grad-CAM)
 
 ![Grad-CAM visualizations](./checkpoints/figures/mobilenet_v2_gradcam.png)
