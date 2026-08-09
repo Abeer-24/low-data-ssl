@@ -26,7 +26,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.models import resnet18, mobilenet_v2, ResNet18_Weights, MobileNet_V2_Weights
+from torchvision.models import (
+    resnet18, mobilenet_v2, efficientnet_b0,
+    ResNet18_Weights, MobileNet_V2_Weights, EfficientNet_B0_Weights,
+)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "data"))
 from stl10_loader import get_stl10_splits, load_seed_config, make_label_percentage_subsets, DATA_ROOT
@@ -47,6 +50,9 @@ def build_model(backbone_name: str, num_classes: int = NUM_CLASSES):
         model.fc = nn.Linear(model.fc.in_features, num_classes)
     elif backbone_name == "mobilenet_v2":
         model = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    elif backbone_name == "efficientnet_b0":
+        model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
     else:
         raise ValueError(f"Unknown backbone: {backbone_name}")
@@ -221,7 +227,7 @@ def run_imagenet_transfer(backbone_name: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2"], default="resnet18")
+    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2", "efficientnet_b0"], default="resnet18")
     args = parser.parse_args()
 
     run_imagenet_transfer(args.backbone)

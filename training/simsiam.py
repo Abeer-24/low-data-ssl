@@ -26,7 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.models import resnet18, mobilenet_v2
+from torchvision.models import resnet18, mobilenet_v2, efficientnet_b0
 
 import wandb
 
@@ -117,6 +117,10 @@ def build_backbone(name: str):
         model = mobilenet_v2(weights=None)
         feature_dim = model.classifier[1].in_features
         model.classifier = nn.Identity()
+    elif name == "efficientnet_b0":
+        model = efficientnet_b0(weights=None)
+        feature_dim = model.classifier[1].in_features
+        model.classifier = nn.Identity()
     else:
         raise ValueError(f"Unknown backbone: {name}")
     return model, feature_dim
@@ -151,7 +155,7 @@ def simsiam_loss(p1, p2, z1, z2):
 # Training loop
 # ---------------------------------------------------------------------------
 
-def train(backbone_name: str, epochs: int, batch_size: int, resume: bool):
+def train(backbone_name: str, epochs: int, batch_size: int, resume: bool, lr: float = 0.05):
     seed_config = load_seed_config()
     seed = seed_config["pretraining_seed"]
     torch.manual_seed(seed)
@@ -177,7 +181,8 @@ def train(backbone_name: str, epochs: int, batch_size: int, resume: bool):
     )
 
     model = SimSiam(backbone_name).to(device)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9, weight_decay=1e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4)
+    print(f"Learning rate: {lr}")
     scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
 
     start_epoch = 0
@@ -252,10 +257,16 @@ def train(backbone_name: str, epochs: int, batch_size: int, resume: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2"], default="resnet18")
+    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2", "efficientnet_b0"], default="resnet18")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--lr", type=float, default=0.05,
+                         help="Learning rate. Default 0.05 worked for "
+                              "ResNet18/MobileNetV2. EfficientNet-B0 showed "
+                              "training instability at this rate (loss "
+                              "destabilized after epoch ~55) -- try 0.02 "
+                              "or 0.01 for that backbone.")
     args = parser.parse_args()
 
-    train(args.backbone, args.epochs, args.batch_size, args.resume)
+    train(args.backbone, args.epochs, args.batch_size, args.resume, args.lr)

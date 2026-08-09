@@ -2,3 +2,5 @@ gradio
 onnxruntime
 numpy
 pillow
+fpdf2
+matplotlib

@@ -1,0 +1,16 @@
+{
+  "resnet18": {
+    "params": 11181642,
+    "params_millions": 11.18,
+    "size_mb": 42.73,
+    "inference_time_ms": 4.04,
+    "fps": 247.3
+  },
+  "mobilenet_v2": {
+    "params": 2236682,
+    "params_millions": 2.24,
+    "size_mb": 8.76,
+    "inference_time_ms": 8.25,
+    "fps": 121.2
+  }
+}

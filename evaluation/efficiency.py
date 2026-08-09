@@ -17,7 +17,7 @@ import time
 import json
 import torch
 import torch.nn as nn
-from torchvision.models import resnet18, mobilenet_v2
+from torchvision.models import resnet18, mobilenet_v2, efficientnet_b0
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "downstream")
 NUM_CLASSES = 10
@@ -29,6 +29,9 @@ def build_model(backbone_name: str):
         model.fc = nn.Linear(model.fc.in_features, NUM_CLASSES)
     elif backbone_name == "mobilenet_v2":
         model = mobilenet_v2(weights=None)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
+    elif backbone_name == "efficientnet_b0":
+        model = efficientnet_b0(weights=None)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
     else:
         raise ValueError(f"Unknown backbone: {backbone_name}")
@@ -81,7 +84,7 @@ def run_efficiency_profile():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Profiling on device: {device}\n")
 
-    backbones = ["resnet18", "mobilenet_v2"]
+    backbones = ["resnet18", "mobilenet_v2", "efficientnet_b0"]
     results = {}
 
     for backbone_name in backbones:

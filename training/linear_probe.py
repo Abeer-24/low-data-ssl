@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.models import resnet18, mobilenet_v2
+from torchvision.models import resnet18, mobilenet_v2, efficientnet_b0
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 
@@ -34,6 +34,7 @@ from stl10_loader import (
 
 CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "simsiam")
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "downstream")
+DEPLOY_CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "..", "checkpoints", "deploy")
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,9 @@ def build_backbone(name: str):
         model.fc = nn.Identity()
     elif name == "mobilenet_v2":
         model = mobilenet_v2(weights=None)
+        model.classifier = nn.Identity()
+    elif name == "efficientnet_b0":
+        model = efficientnet_b0(weights=None)
         model.classifier = nn.Identity()
     else:
         raise ValueError(f"Unknown backbone: {name}")
@@ -161,6 +165,36 @@ def run_linear_probe(backbone_name: str):
             accuracies.append(acc)
             print(f"  seed={seed} ({len(subset)} images): accuracy={acc:.4f}")
 
+            # Save the deployment artifacts from the 100% split, first seed
+            # only. SimSiam serving needs TWO files, unlike the other
+            # strategies: a clean encoder-only checkpoint (for ONNX export
+            # of the feature extractor) and the linear classifier's raw
+            # weights (coef_/intercept_) as a .npz -- saved as plain numpy
+            # arrays rather than a pickled sklearn object, so the deployed
+            # app only needs numpy at inference time (softmax(W @ features
+            # + b)), not scikit-learn itself.
+            if pct == 100 and seed == downstream_seeds[0]:
+                os.makedirs(DEPLOY_CHECKPOINT_DIR, exist_ok=True)
+
+                encoder_deploy_path = os.path.join(
+                    DEPLOY_CHECKPOINT_DIR, f"{backbone_name}_simsiam_encoder_deploy.pt"
+                )
+                torch.save({
+                    "model_state": encoder.state_dict(),
+                    "backbone": backbone_name,
+                }, encoder_deploy_path)
+                print(f"  Encoder checkpoint saved: {encoder_deploy_path}")
+
+                weights_path = os.path.join(
+                    DEPLOY_CHECKPOINT_DIR, f"{backbone_name}_simsiam_linear_weights.npz"
+                )
+                np.savez(
+                    weights_path,
+                    coef=clf.coef_.astype(np.float32),
+                    intercept=clf.intercept_.astype(np.float32),
+                )
+                print(f"  Linear classifier weights saved: {weights_path}")
+
         mean_acc = float(np.mean(accuracies))
         std_acc = float(np.std(accuracies))
         print(f"  -> {mean_acc*100:.1f} ± {std_acc*100:.1f}%")
@@ -190,7 +224,7 @@ def run_linear_probe(backbone_name: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2"], default="resnet18")
+    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2", "efficientnet_b0"], default="resnet18")
     args = parser.parse_args()
 
     run_linear_probe(args.backbone)

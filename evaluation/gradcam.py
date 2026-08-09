@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 from torchvision import transforms
-from torchvision.models import resnet18, mobilenet_v2
+from torchvision.models import resnet18, mobilenet_v2, efficientnet_b0
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
@@ -44,6 +44,9 @@ def build_model(backbone_name: str):
     elif backbone_name == "mobilenet_v2":
         model = mobilenet_v2(weights=None)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
+    elif backbone_name == "efficientnet_b0":
+        model = efficientnet_b0(weights=None)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
     else:
         raise ValueError(f"Unknown backbone: {backbone_name}")
     return model
@@ -55,13 +58,32 @@ def get_target_layer(model, backbone_name: str):
     # was designed for 224x224 ImageNet inputs, where it still has a 7x7
     # grid -- but STL-10 images are 96x96, so that same layer collapses to
     # roughly 3x3, producing smooth, near-content-independent-looking
-    # heatmaps after upsampling. Using an earlier layer (stride 16 instead
-    # of 32) gives a 6x6 grid instead -- still coarse, but meaningfully
-    # more localized, at a small cost in semantic depth.
+    # heatmaps after upsampling.
+    #
+    # features[13] (stride 16 -> 6x6 grid) gives genuinely object-localized
+    # heatmaps -- this is the current default, verified visually.
+    #
+    # features[6] (stride 8 -> 12x12 grid) is available as a finer option,
+    # but trades semantic depth for spatial detail: earlier layers respond
+    # to edges/textures/local patterns rather than whole-object concepts,
+    # so a finer grid here can look sharper while actually being *less*
+    # meaningful -- it may not reflect what the classifier head is really
+    # basing its prediction on. Try both and compare before assuming finer
+    # is better.
     if backbone_name == "resnet18":
         return model.layer3[-1]
     elif backbone_name == "mobilenet_v2":
-        return model.features[13]
+        return model.features[13]  # change to model.features[6] for 12x12
+    elif backbone_name == "efficientnet_b0":
+        # UNVERIFIED CHOICE: features[5] is the stride-16 equivalent point
+        # in EfficientNet-B0's structure (by analogy with MobileNetV2's
+        # verified features[13] choice above), but this has NOT been
+        # visually checked against real output yet, unlike the MobileNetV2
+        # layer. Run this once EfficientNet-B0 is trained and inspect the
+        # heatmaps the same way we did for MobileNetV2 -- if they show the
+        # same smooth, content-independent-looking gradient problem, try
+        # an earlier or later index.
+        return model.features[5]
     else:
         raise ValueError(f"Unknown backbone: {backbone_name}")
 
@@ -153,7 +175,7 @@ def run_gradcam(backbone_name: str, num_images: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2"], default="mobilenet_v2")
+    parser.add_argument("--backbone", choices=["resnet18", "mobilenet_v2", "efficientnet_b0"], default="mobilenet_v2")
     parser.add_argument("--num_images", type=int, default=4)
     args = parser.parse_args()
 
