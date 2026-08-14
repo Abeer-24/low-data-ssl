@@ -62,7 +62,31 @@ IMAGE_SIZE = 96
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-_session_cache = {}
+from collections import OrderedDict
+
+# Bounded LRU cache -- NOT an unbounded dict. There are 12 possible models
+# (9 classifiers + 3 SimSiam encoder/weights pairs); if every combination
+# gets requested (e.g. via the Compare All tab), an unbounded cache would
+# keep all 12 loaded in memory forever, which is very likely what caused
+# a real OOM kill (exit 137) on Render's 512MB free tier. Capping at 4
+# entries keeps memory bounded while still caching repeat single-model use
+# in the Classify tab.
+_SESSION_CACHE_MAX_SIZE = 3
+_session_cache = OrderedDict()
+
+
+def _cache_get(key):
+    if key in _session_cache:
+        _session_cache.move_to_end(key)  # mark as recently used
+        return _session_cache[key]
+    return None
+
+
+def _cache_put(key, value):
+    _session_cache[key] = value
+    _session_cache.move_to_end(key)
+    if len(_session_cache) > _SESSION_CACHE_MAX_SIZE:
+        _session_cache.popitem(last=False)  # evict least-recently-used
 
 
 # ---------------------------------------------------------------------------
@@ -85,20 +109,22 @@ def softmax(x: np.ndarray) -> np.ndarray:
 
 def get_classifier_session(backbone: str, strategy: str):
     key = ("classifier", backbone, strategy)
-    if key in _session_cache:
-        return _session_cache[key]
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     path = os.path.join(MODELS_DIR, f"{backbone}_{strategy}_classifier.onnx")
     if not os.path.exists(path):
         return None
     session = ort.InferenceSession(path)
-    _session_cache[key] = session
+    _cache_put(key, session)
     return session
 
 
 def get_simsiam_session_and_weights(backbone: str):
     key = ("simsiam", backbone)
-    if key in _session_cache:
-        return _session_cache[key]
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     encoder_path = os.path.join(MODELS_DIR, f"{backbone}_simsiam_encoder.onnx")
     weights_path = os.path.join(MODELS_DIR, f"{backbone}_simsiam_linear_weights.npz")
     if not os.path.exists(encoder_path) or not os.path.exists(weights_path):
@@ -106,7 +132,7 @@ def get_simsiam_session_and_weights(backbone: str):
     session = ort.InferenceSession(encoder_path)
     weights = np.load(weights_path)
     result = (session, weights["coef"], weights["intercept"])
-    _session_cache[key] = result
+    _cache_put(key, result)
     return result
 
 

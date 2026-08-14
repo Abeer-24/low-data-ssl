@@ -1,44 +1,60 @@
 # Self-Supervised Learning in the Low-Data Regime
 
+**[Try the live demo →](https://low-data-ssl.onrender.com)** (free-tier
+hosting — may take 30-60s to wake up on first visit)
+
 Comparing self-supervised pretraining (SimSiam) against supervised
-baselines, data augmentation, and ImageNet transfer learning — across two
-CNN backbones and six labeled-data percentages (1% to 100%) — to find out
-when SSL pretraining is actually worth the extra compute.
+baselines, data augmentation, and ImageNet transfer learning — across
+three CNN backbones and six labeled-data percentages (1% to 100%) — to
+find out when SSL pretraining is actually worth the extra compute. The
+live demo lets you pick any of the 12 backbone × strategy combinations
+and classify images with it directly, or compare all 12 on one image at
+once.
 
 Full methodology, dataset details, seed policy, and limitations are in
 [`PROJECT_DOCUMENTATION.md`](./PROJECT_DOCUMENTATION.md).
 
 ## Key finding
 
-SimSiam only beats ImageNet transfer learning in the extreme low-data
-regime (≤10% labels) — and even there, the margin narrows fast. Past 10%
-labels, transfer learning wins, and its lead grows. The best-performing
-combination overall isn't the elaborate SSL pipeline — it's the smaller
-backbone (MobileNetV2) fine-tuned from free ImageNet weights.
+The crossover point where SimSiam beats ImageNet transfer learning is
+**backbone-specific, not universal**: it only holds for ResNet18, and even
+there only in the extreme low-data regime (≤10% labels). For MobileNetV2
+and EfficientNet-B0, ImageNet transfer wins at *every* label percentage
+tested, including 1%. The best-performing combination overall isn't the
+SSL pipeline this project was built around — it's **EfficientNet-B0 fine-tuned
+from free ImageNet weights**, which beats every other combination
+(including the previously-reported best, MobileNetV2) at every label
+percentage.
 
-| Label % | ResNet18 Baseline | ResNet18 SimSiam | MobileNetV2 ImageNet |
+| Label % | ResNet18 Baseline | ResNet18 SimSiam | EfficientNet-B0 ImageNet |
 |---|---|---|---|
-| 1% | 20.7% | **56.7%** | 57.3% |
-| 10% | 36.3% | 70.1% | **74.6%** |
-| 100% | 62.5% | 76.1% | **87.7%** |
+| 1% | 20.8% | **56.7%** | **59.1%** |
+| 10% | 37.1% | 70.1% | **78.8%** |
+| 100% | 61.5% | 76.1% | **89.3%** |
 
-Full 2-backbone × 4-strategy comparison table in
-[`PROJECT_DOCUMENTATION.md`, Section 11](./PROJECT_DOCUMENTATION.md#11-results-both-backbones).
+Full 3-backbone × 4-strategy comparison table (12 combinations) in
+[`PROJECT_DOCUMENTATION.md`, Section 11](./PROJECT_DOCUMENTATION.md#11-results-all-three-backbones).
 
 ## Efficiency
 
 | Model | Params | Size (MB) | Inference Time | FPS |
 |---|---|---|---|---|
-| ResNet18 | 11.18M | 42.73 MB | 4.04 ms | 247.3 |
-| MobileNetV2 | 2.24M | **8.76 MB** | 8.25 ms | 121.2 |
+| ResNet18 | 11.18M | 42.73 MB | **3.89 ms** | **257.3** |
+| MobileNetV2 | 2.24M | **8.76 MB** | 7.18 ms | 139.4 |
+| EfficientNet-B0 | 4.02M | 15.62 MB | 10.61 ms | 94.3 |
 
-MobileNetV2 is ~5x smaller but roughly **2x slower** on this study's GPU
-(RTX 3050) — depthwise separable convolutions parallelize less efficiently
-on GPU hardware than ResNet18's standard convolutions at batch size 1,
-despite having far fewer parameters. The deployed model (MobileNetV2 +
-ImageNet transfer) was chosen for accuracy and size, not GPU speed — see
-[Section 11.6](./PROJECT_DOCUMENTATION.md#116-deployment-decision) for the
-full reasoning.
+Fewer parameters doesn't mean faster GPU inference — ResNet18 is both the
+largest model here and the fastest at inference, while EfficientNet-B0 is
+mid-sized but the slowest of the three. Both MobileNetV2 and
+EfficientNet-B0 rely on depthwise separable convolutions that parallelize
+less efficiently on GPU hardware than ResNet18's standard convolutions at
+batch size 1. Despite this, EfficientNet-B0 + ImageNet Transfer is the
+deployed default in the live demo (Section
+[11.6](./PROJECT_DOCUMENTATION.md#116-deployment-decision)) — sub-15ms
+inference is imperceptible for an interactive single-image demo regardless
+of which of the three is used, so accuracy was weighted over speed. The
+live app lets you pick any of the other 11 combinations yourself if speed
+or size matters more for your use case.
 
 **Note on out-of-distribution inputs:** the deployed app always predicts
 one of the 10 trained classes, with no "none of the above" option — OOD
@@ -52,10 +68,15 @@ awareness, not a bug.
 
 ![Grad-CAM visualizations](./checkpoints/figures/mobilenet_v2_gradcam.png)
 
-Grad-CAM on the deployed model (MobileNetV2 + ImageNet transfer, 100%
-labels). Note: STL-10's 96×96 images collapse to a very coarse spatial
-grid at this backbone's final layer (roughly 3×3), so the heatmaps use an
-earlier layer (6×6 grid) to stay genuinely object-localized rather than
+Grad-CAM on MobileNetV2 + ImageNet transfer, 100% labels — generated when
+MobileNetV2 was still the deployment default. **Note:** the deployment
+default later changed to EfficientNet-B0 (Section 11.2), and this figure
+was not regenerated for that backbone — `evaluation/gradcam.py` has an
+EfficientNet-B0 target-layer choice, but it's explicitly flagged in that
+file as unverified against real output, unlike the MobileNetV2 layer used
+here. STL-10's 96×96 images collapse to a very coarse spatial grid at a
+backbone's final layer (roughly 3×3 for MobileNetV2), so the heatmaps use
+an earlier layer (6×6 grid) to stay genuinely object-localized rather than
 producing smooth, content-independent-looking gradients. Generated by
 [`evaluation/gradcam.py`](./evaluation/gradcam.py).
 
@@ -76,8 +97,9 @@ downstream training, 8,000 labeled images for evaluation. 96×96 resolution,
 
 ## Backbones
 
-ResNet18 (11.18M params), MobileNetV2 (2.24M params) -- see
-[Efficiency](#efficiency) above for exact measurements.
+ResNet18 (11.18M params), MobileNetV2 (2.24M params), EfficientNet-B0
+(4.02M params) -- see [Efficiency](#efficiency) above for exact
+measurements.
 
 ## Project structure
 
@@ -85,15 +107,22 @@ ResNet18 (11.18M params), MobileNetV2 (2.24M params) -- see
 LowDataSSL/
 ├── data/stl10_loader.py          # dataset download + label-percentage splits
 ├── training/
-│   ├── simsiam.py                 # SSL pretraining
+│   ├── simsiam.py                 # SSL pretraining (3 backbones)
 │   ├── baseline.py                 # supervised from scratch
 │   ├── augmented.py                 # supervised + augmentation
 │   ├── imagenet_transfer.py          # ImageNet fine-tuning
 │   └── linear_probe.py                # frozen SSL embeddings + logistic regression
+├── evaluation/
+│   ├── efficiency.py                   # params/size/inference-time benchmarking
+│   ├── gradcam.py                       # explainability figure generation
+│   ├── compute_full_metrics.py           # precision/recall/F1 for all 12 combos
+│   └── export_examples.py                 # sample images for the live demo
+├── export/to_onnx.py               # ONNX export for deployment
+├── render_deploy/                    # the live Gradio app (Render.com)
 ├── configs/
 │   ├── seeds.yaml                      # single source of truth for all seeds
 │   └── wandb_config.yaml                # experiment tracking config
-├── checkpoints/downstream/                # accuracy results (JSON)
+├── checkpoints/downstream/                # accuracy + metrics results (JSON)
 └── PROJECT_DOCUMENTATION.md                # full writeup
 ```
 
@@ -103,7 +132,7 @@ LowDataSSL/
 python -m venv venv
 venv\Scripts\activate          # Windows
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install scikit-learn wandb pyyaml matplotlib grad-cam onnx gradio
+pip install scikit-learn wandb pyyaml matplotlib grad-cam onnx onnxruntime gradio fpdf2
 ```
 
 ## Usage
@@ -122,12 +151,17 @@ python training/augmented.py --backbone resnet18
 python training/imagenet_transfer.py --backbone resnet18
 ```
 
-Repeat steps 2-3 with `--backbone mobilenet_v2` for the second backbone.
+Repeat steps 2-3 with `--backbone mobilenet_v2` and
+`--backbone efficientnet_b0` for the other two backbones. EfficientNet-B0
+needed a lower SimSiam learning rate (`--lr 0.02` instead of the default
+0.05) to avoid training instability — see
+[Section 11](./PROJECT_DOCUMENTATION.md#11-results-all-three-backbones)
+for why.
 
 ## Hardware used
 
 RTX 3050 Laptop GPU (4GB VRAM), Ryzen 5 5000-series, 16GB RAM. SimSiam
-pretraining run once per backbone (75-80 epochs) due to compute
+pretraining run once per backbone (75-100 epochs) due to compute
 constraints; all downstream evaluation repeated across 3 seeds. See
 [Limitations](./PROJECT_DOCUMENTATION.md#12-limitations) for details.
 

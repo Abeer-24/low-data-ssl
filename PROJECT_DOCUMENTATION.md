@@ -118,11 +118,11 @@ Future Work, not implemented, to keep the comparison clean and finishable.
 
 ## 5. Architectures
 
-| Backbone | Parameters (approx.) | Included? |
+| Backbone | Parameters (measured) | Included? |
 |---|---|---|
-| ResNet18 | ~11M | Yes |
-| MobileNetV2 | ~3.4M | Yes |
-| EfficientNet-B0 | ~5.3M | Cut for v1 (stretch goal) |
+| ResNet18 | 11.18M | Yes |
+| MobileNetV2 | 2.24M | Yes |
+| EfficientNet-B0 | 4.02M | Yes — added after initial scope (see Section 10) |
 | ViT-B/16, Swin, ConvNeXt | 30M–86M | Excluded — infeasible on 4GB VRAM and works against low-data thesis (transformers are more data-hungry) |
 
 ---
@@ -196,28 +196,38 @@ custom tracking dashboard.
 ## 8. Deployment Plan
 
 Deployment is treated as a design constraint decided *before* training, not
-bolted on afterward.
+bolted on afterward. **Note: the original plan below (single fixed model,
+Hugging Face Spaces) changed after initial deployment — see the update at
+the end of this section for what's actually live.**
 
-- **Model export:** TorchScript or ONNX — decouples serving from training
-  code, avoids environment/version mismatches.
-- **Single deployed model:** one final choice (best backbone + best
-  strategy), not a live multi-model comparison tool. Comparison results are
-  static (plots/tables) in the README/notebook, not computed at runtime.
-- **Serving:** Gradio app on Hugging Face Spaces — free hosting, no custom
-  frontend/backend split to maintain.
-- **Excluded from the live app:** Grad-CAM, t-SNE, live multi-backbone
-  comparisons — kept as static images in documentation to avoid extra
-  inference-time compute and failure modes in production.
+- **Model export:** ONNX — decouples serving from training code, avoids
+  environment/version mismatches. All 12 backbone × strategy combinations
+  are exported (SimSiam exports as an encoder-only ONNX graph plus a
+  separately saved linear classifier, since scikit-learn's
+  `LogisticRegression` isn't ONNX-native).
+- **Excluded from the live app:** Grad-CAM specifically — this is a hard
+  technical constraint, not a scope choice: ONNX Runtime has no
+  autograd/backprop support, so gradient-based explainability methods
+  cannot run on it regardless of effort. Grad-CAM remains a static figure
+  in this documentation.
 
-**Final model choice (locked in after results, see Section 11.6):
-MobileNetV2, fine-tuned from ImageNet weights.** It was the most accurate
-combination at every label percentage tested across all 8 backbone ×
-strategy combinations, and it has the smallest model size/download
-footprint. It is not the fastest option on this study's GPU -- ResNet18
-is roughly 2x faster per image at inference (Section 11.5) -- but for a
-small interactive demo, sub-10ms inference on either backbone is well
-within acceptable latency, so accuracy and size were weighted more
-heavily than the speed difference.
+**Update — what's actually deployed:** the original single-model plan was
+revisited after deployment. The live app (Render.com, not Hugging Face
+Spaces — see note below) lets visitors choose *any* of the 12 trained
+backbone × strategy combinations and classify images live, plus a
+"Compare All" view that runs all 12 on one uploaded image simultaneously,
+grouped by backbone. This reverses the original "single deployed model,
+no live comparison" decision — live comparison turned out to be worth the
+added complexity, since it directly demonstrates the project's actual
+thesis (comparing strategies) rather than requiring the visitor to trust
+a single number.
+
+**Hosting note:** Hugging Face Spaces changed its pricing during this
+project — as of mid-2026, creating a Space with the Gradio or Docker SDK
+requires a paid plan; only Static Spaces remain free. The app is deployed
+on **Render.com's free tier** instead (no credit card required; the
+service sleeps after 15 minutes of inactivity, with a ~30-60s cold start
+on the next visit).
 
 ---
 
@@ -260,7 +270,6 @@ LowDataSSL/
 | OOD detection | Cut | Separate project |
 | Retrieval / similarity search | Cut | Interesting but scope creep |
 | Custom experiment-tracking dashboard | Cut, replaced by W&B | No need to build one when W&B exists |
-| Live multi-model comparison in deployed app | Cut | Conflicts with "effortless deployment" goal; static plots shown instead |
 | 3-seed SimSiam pretraining | Cut | Compute cost multiplies the already-expensive stage; 1 seed used, disclosed as a limitation |
 
 **Added after initial scope (accepted on merit, not by default):**
@@ -273,66 +282,108 @@ LowDataSSL/
 | Weights & Biases tracking | Added | Replaces a custom dashboard that was never going to get built anyway |
 | Research-paper style documentation structure | Added | Zero compute cost, pure formatting |
 | 3-seed evaluation (linear probe, baseline, augmentation, transfer learning) | Added | Cheap stages made statistically robust; only SimSiam pretraining stays single-seed |
+| EfficientNet-B0 as a third backbone | Added | Originally cut for requiring a fresh multi-day SimSiam pretraining run; added later once that time was available. Its SimSiam run initially destabilized (loss oscillating, near-chance downstream accuracy) at the same learning rate that worked for ResNet18/MobileNetV2 — halving the learning rate (0.05 → 0.02) fixed it, a genuine architecture-specific hyperparameter sensitivity finding, not a bug (see Section 11) |
+| Live backbone/strategy selector + "Compare All" view in deployed app | Added, reversing the original "single model, no live comparison" decision | Directly demonstrates the project's core thesis (comparing strategies) rather than requiring the visitor to trust one static number; made practical by ONNX's fast CPU inference (single-digit-ms per model) |
 
 ---
 
-## 11. Results (Both Backbones)
+## 11. Results (All Three Backbones)
 
-SimSiam pretrained for 75 epochs (ResNet18) and 80 epochs (MobileNetV2) --
-both stopped once loss clearly plateaued, not at a fixed epoch count.
-ResNet18's loss stabilized around -0.85 from ~epoch 25; MobileNetV2's
-stabilized around -0.89 from ~epoch 50.
+SimSiam pretrained for 75 epochs (ResNet18), 80 epochs (MobileNetV2), and
+100 epochs (EfficientNet-B0) — each stopped once loss clearly plateaued,
+not at a fixed epoch count. ResNet18's loss stabilized around -0.85 from
+~epoch 25; MobileNetV2's around -0.89 from ~epoch 50.
 
-**Full comparison, all 8 backbone × strategy combinations, accuracy (mean ±
-std across 3 seeds, each seed a different random label-percentage
+**EfficientNet-B0's pretraining needed a real fix, not just more epochs:**
+at the same learning rate (0.05) that worked for the other two backbones,
+its loss destabilized after epoch ~55 (repeated sharp drops to -0.62 to
+-0.76, never recovering to its earlier best), and the resulting encoder
+was nearly useless — 21-24% linear-probe accuracy, barely above the 10%
+chance baseline. Halving the learning rate to 0.02 and retraining from
+scratch fixed this completely: loss held a clean plateau around -0.88 from
+epoch ~55 onward, and linear-probe accuracy jumped to 43.7-61.1%. This is
+reported as a genuine architecture-specific hyperparameter sensitivity
+finding — the same optimizer settings do not transfer cleanly across
+backbones — not glossed over as a minor tuning detail.
+
+**Full comparison, all 12 backbone × strategy combinations, accuracy (mean
+± std across 3 seeds, each seed a different random label-percentage
 subsample):**
 
-| Label % | R18 Baseline | R18 Augmented | R18 ImageNet | R18 SimSiam | MNv2 Baseline | MNv2 Augmented | MNv2 ImageNet | MNv2 SimSiam |
-|---|---|---|---|---|---|---|---|---|
-| 1% | 20.7 ± 1.1% | 23.7 ± 1.6% | 54.4 ± 1.7% | 56.7 ± 0.9% | 10.0 ± 0.0% | 10.0 ± 0.0% | **57.3 ± 1.1%** | 53.6 ± 1.2% |
-| 5% | 33.3 ± 0.9% | 38.7 ± 1.5% | 62.9 ± 2.1% | 68.0 ± 0.2% | 22.9 ± 1.0% | 32.3 ± 1.2% | **71.3 ± 1.3%** | 61.2 ± 0.2% |
-| 10% | 36.3 ± 1.6% | 43.2 ± 0.6% | 69.0 ± 2.3% | 70.1 ± 0.2% | 26.6 ± 1.8% | 37.0 ± 0.5% | **74.6 ± 1.0%** | 62.9 ± 0.3% |
-| 20% | 36.7 ± 4.8% | 49.5 ± 3.5% | 76.8 ± 0.9% | 71.6 ± 0.0% | 33.6 ± 1.3% | 42.2 ± 0.8% | **79.3 ± 0.6%** | 64.6 ± 0.3% |
-| 50% | 52.8 ± 0.5% | 60.1 ± 1.6% | 80.1 ± 0.5% | 74.2 ± 0.3% | 42.4 ± 0.8% | 54.4 ± 0.9% | **83.3 ± 0.5%** | 66.7 ± 0.2% |
-| 100% | 62.5 ± 0.7% | 68.6 ± 1.3% | 84.3 ± 0.9% | 76.1 ± 0.0% | 50.9 ± 0.9% | 65.2 ± 0.5% | **87.7 ± 0.8%** | 68.0 ± 0.0% |
+| Backbone | Strategy | 1% | 5% | 10% | 20% | 50% | 100% |
+|---|---|---|---|---|---|---|---|
+| ResNet18 | Baseline | 20.8±1.3% | 31.7±2.8% | 37.1±1.0% | 42.3±0.6% | 51.7±1.4% | 61.5±0.5% |
+| ResNet18 | Augmented | 23.8±2.0% | 38.8±1.5% | 40.4±2.0% | 51.2±2.6% | 59.8±1.7% | 67.1±0.3% |
+| ResNet18 | ImageNet Transfer | 54.5±1.7% | 64.4±6.0% | 68.9±2.3% | 76.2±0.6% | 77.9±2.3% | 84.8±1.3% |
+| ResNet18 | SimSiam | 56.7±0.9% | 68.0±0.2% | 70.1±0.2% | 71.6±0.0% | 74.2±0.3% | 76.1±0.0% |
+| MobileNetV2 | Baseline | 10.0±0.0% | 22.6±0.9% | 26.7±2.1% | 32.7±1.5% | 41.9±0.3% | 49.9±0.8% |
+| MobileNetV2 | Augmented | 10.0±0.0% | 33.2±0.7% | 36.5±1.9% | 41.7±0.9% | 53.3±1.3% | 64.3±1.6% |
+| MobileNetV2 | ImageNet Transfer | 57.4±0.9% | 73.1±0.3% | 74.7±1.0% | 78.2±0.7% | 82.4±1.2% | 86.4±1.1% |
+| MobileNetV2 | SimSiam | 53.6±1.2% | 61.2±0.2% | 62.9±0.3% | 64.6±0.3% | 66.7±0.2% | 68.0±0.0% |
+| EfficientNet-B0 | Baseline | 10.0±0.0% | 24.1±2.3% | 28.0±0.3% | 32.6±0.3% | 42.4±0.6% | 53.9±0.8% |
+| EfficientNet-B0 | Augmented | 10.0±0.0% | 31.8±3.4% | 38.1±1.8% | 44.5±1.3% | 52.1±2.8% | 65.5±0.9% |
+| EfficientNet-B0 | **ImageNet Transfer** | **59.1±1.4%** | **77.3±0.2%** | **78.8±1.1%** | **82.0±1.1%** | **87.0±0.1%** | **89.3±0.5%** |
+| EfficientNet-B0 | SimSiam | 43.7±0.9% | 54.1±0.9% | 57.1±0.3% | 58.2±0.3% | 60.1±0.1% | 61.1±0.0% |
 
-### 11.1 Key finding 1 -- the ResNet18 crossover (SSL vs. ImageNet transfer)
+**EfficientNet-B0 + ImageNet Transfer Learning is the best-performing
+combination at every single label percentage in the entire study**,
+overtaking MobileNetV2 + ImageNet Transfer (the previous documented
+best). This is flagged explicitly because it changes the practical
+conclusion from the two-backbone version of this study, not just extends
+it.
+
+### 11.1 Key finding 1 -- the ResNet18 crossover is backbone-specific, not universal
 
 Restricting to ResNet18: SimSiam pretraining on STL-10's unlabeled pool
 beats ImageNet transfer learning only in the extreme low-data regime (≤10%
 labels), and even there the margin narrows quickly (2.3 → 5.1 → 1.1 points).
 Past 10% labels, ImageNet transfer wins and its advantage grows as more
-labels become available (5.2 → 5.9 → 8.2 points). **Practical conclusion:**
-self-supervised pretraining on domain-specific unlabeled data is worth the
-extra compute specifically when labeled data is extremely scarce (roughly
-≤10% in this setup); past that point, transfer learning from ImageNet is
-the stronger and cheaper default.
+labels become available (5.2 → 5.9 → 8.2 points).
 
-### 11.2 Key finding 2 -- MobileNetV2 + ImageNet transfer wins outright
+**This crossover does not hold for the other two backbones.** For both
+MobileNetV2 and EfficientNet-B0, ImageNet Transfer beats SimSiam at *every*
+label percentage tested, including 1% (MobileNetV2: 57.4% vs. 53.6%;
+EfficientNet-B0: 59.1% vs. 43.7%). Only ResNet18 shows SimSiam pretraining
+ever being the better choice. **Practical conclusion, corrected from the
+two-backbone version of this study:** self-supervised pretraining being
+worthwhile in the extreme low-data regime is not a general property of
+this setup — it depends on the backbone architecture, and held for only
+one of the three tested here.
 
-Across both backbones and every label percentage, **MobileNetV2 fine-tuned
-from ImageNet weights is the single best-performing combination in the
-entire study** -- beating even ResNet18 + SimSiam, the combination the
-project was originally built to showcase. This overturns two naive
-assumptions at once: that a larger backbone (ResNet18, ~11M params) should
-outperform a smaller one (MobileNetV2, ~3.4M params), and that the more
-sophisticated self-supervised method should beat a simple transfer-learning
-baseline. Neither held. The practical, defensible conclusion is that the
-smaller, cheaper backbone paired with free pretrained weights is the
-correct deployment choice here -- not the more elaborate SSL pipeline.
+### 11.2 Key finding 2 -- EfficientNet-B0 + ImageNet transfer is the true
+best combination, not MobileNetV2
 
-### 11.3 Notable anomaly -- MobileNetV2 collapse at 1% labels (from scratch)
+With only two backbones, MobileNetV2 + ImageNet Transfer appeared to be
+the best-performing combination in the study. **Adding EfficientNet-B0
+overturns that**: EfficientNet-B0 + ImageNet Transfer beats MobileNetV2 +
+ImageNet Transfer at every label percentage (e.g. 89.3% vs. 86.4% at
+100%; 59.1% vs. 57.4% at 1%), and also beats ResNet18 + SimSiam, the
+combination this project was originally built to showcase. This is a
+concrete illustration of why the two-backbone version of this document
+was labeled a limitation rather than a final answer (see Section 12):
+adding one more architecture changed the actual winner, not just the
+supporting detail count. The practical, defensible conclusion remains
+the same in spirit — the more sophisticated SSL pipeline is not
+automatically the best choice — but the specific "best" model changed
+once a wider architecture search was actually run.
+
+### 11.3 Notable pattern -- from-scratch collapse at 1% labels (not just MobileNetV2)
 
 MobileNetV2 Baseline and Augmented both collapsed to exactly 10.0 ± 0.0%
 accuracy at 1% labels (50 images) across all 3 seeds -- chance level for a
 10-class problem, with zero variance, indicating the model predicted a
-single class for every test image regardless of seed. ResNet18 did not
-collapse this way at the same label percentage (20.7%). This is reported
-as an observed architecture-robustness difference (MobileNetV2's depthwise
-separable convolutions and batch normalization statistics may be more
-sensitive to very small batches/datasets when trained from scratch), not
-attributed to a bug -- the same code path produced sane results at every
-other label percentage and for the other three strategies.
+single class for every test image regardless of seed. **EfficientNet-B0
+shows the identical pattern** (Baseline and Augmented both 10.0 ± 0.0% at
+1%). ResNet18 did not collapse this way at the same label percentage
+(20.8%). With the collapse now observed in two of three backbones, this
+looks less like a MobileNetV2-specific quirk and more like a broader
+pattern: architectures using batch normalization and comparatively
+higher effective capacity for their depth may fail to learn *anything*
+useful from just 50 images without either pretrained weights or an SSL
+warm-start, while ResNet18 avoids total failure at the same data volume.
+This remains a reported observation, not a root-caused bug — the same
+code path produced sane results at every other label percentage and
+strategy for all three backbones.
 
 ### 11.4 Secondary finding -- augmentation's contribution is inversely
 related to where SSL's advantage matters most
@@ -351,33 +402,38 @@ inference, 96×96 input:
 
 | Model | Params | Size (MB) | Inference Time | FPS |
 |---|---|---|---|---|
-| ResNet18 | 11.18M | 42.73 MB | 4.04 ms | 247.3 |
-| MobileNetV2 | 2.24M | **8.76 MB** | 8.25 ms | 121.2 |
+| ResNet18 | 11.18M | 42.73 MB | 3.89 ms | 257.3 |
+| MobileNetV2 | 2.24M | **8.76 MB** | 7.18 ms | 139.4 |
+| EfficientNet-B0 | 4.02M | 15.62 MB | 10.61 ms | 94.3 |
 
-**Counterintuitive result, stated plainly:** MobileNetV2 is ~5x smaller
-but roughly **2x slower** than ResNet18 on this GPU. This is not a bug --
-MobileNetV2's depthwise separable convolutions are optimized for FLOP
-count and mobile/CPU deployment, but involve many small sequential
-operations that parallelize less efficiently on GPU hardware than
-ResNet18's larger, cuDNN-optimized standard convolutions, especially at
-batch size 1. "Fewer parameters" does not automatically mean "faster" --
-the answer is hardware-dependent. On a CPU-only deployment target (e.g.
-Hugging Face Spaces' free tier), this comparison could plausibly reverse,
-since depthwise separable convolutions often do win on CPU. This was not
-verified in this study and is noted as a gap, not assumed.
+**Pattern confirmed, not just a two-backbone coincidence:** fewer
+parameters does not mean faster GPU inference. ResNet18 is both the
+largest model and the fastest at inference; EfficientNet-B0 is a
+mid-sized model but the slowest of the three. This tracks with the
+architectures' designs — ResNet18's standard convolutions are the most
+GPU/cuDNN-friendly of the three, while EfficientNet-B0 (like MobileNetV2)
+relies on depthwise separable convolutions and additional squeeze-excitation
+blocks, adding more sequential small operations that parallelize less
+efficiently on GPU hardware at batch size 1. Despite being the slowest
+and a mid-sized model, EfficientNet-B0 is still the deployment choice
+(Section 8) because its accuracy advantage (Section 11.2) was judged more
+important than inference speed for an interactive single-image demo,
+where sub-15ms inference is imperceptible to a user regardless of which
+of the three models is chosen.
 
 ### 11.6 Deployment decision
 
-**Chosen for deployment: MobileNetV2, fine-tuned from ImageNet weights.**
-This is the most accurate combination across all label percentages tested
-(Section 11.2) and has the smallest model size/download footprint (Section
-11.5) -- but it is not the fastest inference option on this study's GPU,
-where ResNet18 is roughly 2x faster per image. The choice prioritizes
-accuracy and deployment size over raw GPU inference speed, which is an
-explicit tradeoff, not an oversight: for a small classification demo
-served via Gradio, sub-10ms inference on either model is well within
-acceptable latency for interactive use, so accuracy and download size were
-weighted more heavily than the speed difference.
+The deployed app does not serve one fixed model — see Section 8's update
+for why that changed. **If a single "best" combination had to be named,
+it is EfficientNet-B0 + ImageNet Transfer Learning** (Section 11.2): the
+most accurate combination at every label percentage tested, though not
+the fastest or smallest (Section 11.5) — ResNet18 is roughly 2.7x faster
+per image and MobileNetV2 is roughly 1.8x smaller. For an interactive
+single-image demo, sub-15ms inference is imperceptible regardless of
+which of the three is used, so accuracy was weighted over the size/speed
+difference for this specific recommendation — but the live app lets a
+visitor make that tradeoff themselves rather than having it decided for
+them in advance.
 
 ---
 
@@ -393,24 +449,40 @@ weighted more heavily than the speed difference.
 - SimSiam was chosen for hardware feasibility, not because it's the
   strongest-performing SSL method available (SimCLR/BYOL/DINO may outperform
   it given sufficient compute).
-- Only two backbones compared; conclusions about "which architecture is
-  best" are limited to ResNet18 vs. MobileNetV2, not a general claim about
-  CNN architectures.
+- Three backbones compared (ResNet18, MobileNetV2, EfficientNet-B0);
+  conclusions about "which architecture is best" are limited to these
+  three, not a general claim about CNN architectures. The two-backbone
+  version of this study named a different "best" combination than the
+  three-backbone version does (Section 11.2) — a concrete illustration
+  that this limitation is real, not a formality.
 - Label-percentage subsampling uses a fixed split per percentage (not
   re-sampled per seed), so reported variance reflects downstream
   training/init noise, not subsampling noise.
-- MobileNetV2 trained from scratch (Baseline and Augmented strategies)
-  collapsed to chance-level accuracy at 1% labels (see Section 11.3) --
-  this was not investigated further (e.g. via learning-rate tuning or
-  batch-norm adjustments) since the deployment decision did not depend on
-  fixing it; flagged here rather than omitted.
+- MobileNetV2 and EfficientNet-B0 trained from scratch (Baseline and
+  Augmented strategies) both collapsed to chance-level accuracy at 1%
+  labels (see Section 11.3) -- this was not root-caused (e.g. via
+  learning-rate tuning or batch-norm adjustments specific to that failure)
+  since the deployment decision did not depend on fixing it; flagged here
+  rather than omitted.
+- EfficientNet-B0's SimSiam pretraining required a different learning
+  rate (0.02 vs. 0.05) than the other two backbones to avoid training
+  instability (Section 11); hyperparameters were not systematically
+  re-tuned per backbone beyond this one necessary fix, so it's possible
+  further tuning could change any of the three backbones' SimSiam results.
 
 ## 13. Future Work
 
 - Add SimCLR/BYOL for comparison against SimSiam (compute permitting).
-- Add EfficientNet-B0 once core results are validated.
 - Semi-supervised methods (FixMatch) as a separate comparative study.
 - Quantization/pruning for an edge-deployment follow-up project.
 - t-SNE/UMAP visualization of embedding space before vs. after SSL
   pretraining (static in docs only).
 - Multi-seed SimSiam pretraining, if additional compute becomes available.
+- Root-cause the from-scratch collapse at 1% labels (MobileNetV2 and
+  EfficientNet-B0, Section 11.3) rather than only reporting it.
+- Systematically re-tune SimSiam hyperparameters per backbone, rather than
+  only fixing EfficientNet-B0's learning rate reactively after observing
+  instability.
+- CPU-only inference benchmarking (the current efficiency numbers, Section
+  11.5, are GPU-only; the deployed app runs on Render's CPU-only free
+  tier, and the size/speed ranking could plausibly differ there).
