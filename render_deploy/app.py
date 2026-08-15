@@ -107,6 +107,21 @@ def softmax(x: np.ndarray) -> np.ndarray:
     return exp / exp.sum()
 
 
+def _low_memory_session_options() -> ort.SessionOptions:
+    """ONNX Runtime's defaults assume a machine with many cores and
+    generous memory -- both its thread pool and its memory arena can
+    over-allocate relative to what's actually available on a constrained
+    container like Render's free tier. This caps both explicitly, which
+    is standard practice for onnxruntime in resource-constrained
+    deployments, not a guess specific to this app's symptoms."""
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 1
+    options.inter_op_num_threads = 1
+    options.enable_cpu_mem_arena = False
+    options.enable_mem_pattern = False
+    return options
+
+
 def get_classifier_session(backbone: str, strategy: str):
     key = ("classifier", backbone, strategy)
     cached = _cache_get(key)
@@ -115,7 +130,7 @@ def get_classifier_session(backbone: str, strategy: str):
     path = os.path.join(MODELS_DIR, f"{backbone}_{strategy}_classifier.onnx")
     if not os.path.exists(path):
         return None
-    session = ort.InferenceSession(path)
+    session = ort.InferenceSession(path, sess_options=_low_memory_session_options())
     _cache_put(key, session)
     return session
 
@@ -129,7 +144,7 @@ def get_simsiam_session_and_weights(backbone: str):
     weights_path = os.path.join(MODELS_DIR, f"{backbone}_simsiam_linear_weights.npz")
     if not os.path.exists(encoder_path) or not os.path.exists(weights_path):
         return None
-    session = ort.InferenceSession(encoder_path)
+    session = ort.InferenceSession(encoder_path, sess_options=_low_memory_session_options())
     weights = np.load(weights_path)
     result = (session, weights["coef"], weights["intercept"])
     _cache_put(key, result)
