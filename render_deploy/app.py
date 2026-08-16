@@ -21,6 +21,7 @@ import os
 import io
 import json
 import time
+import gc
 import base64
 import numpy as np
 from PIL import Image
@@ -153,7 +154,9 @@ def get_simsiam_session_and_weights(backbone: str):
 
 def run_single_inference(backbone: str, strategy: str, input_array: np.ndarray):
     """Returns (result_dict, inference_time_ms) or (None, None) if the
-    model files aren't available."""
+    model files aren't available. Uses the shared cache -- appropriate
+    for the Classify tab, where the same model is likely to be reused
+    across several requests in a row."""
     start = time.perf_counter()
     if strategy == "simsiam":
         loaded = get_simsiam_session_and_weights(backbone)
@@ -171,6 +174,46 @@ def run_single_inference(backbone: str, strategy: str, input_array: np.ndarray):
         probs = softmax(outputs[0])
     elapsed_ms = (time.perf_counter() - start) * 1000
 
+    result = {CLASS_NAMES[i]: float(probs[i]) for i in range(len(CLASS_NAMES))}
+    return result, elapsed_ms
+
+
+def run_single_inference_ephemeral(backbone: str, strategy: str, input_array: np.ndarray):
+    """Same as run_single_inference, but deliberately bypasses the shared
+    cache -- loads the model fresh, runs one inference, then explicitly
+    frees it before returning. Used by Compare All, where each of the 12
+    models is only ever used once per request, so caching provides no
+    benefit and only risks keeping several large models resident in
+    memory at once -- the most likely cause of the OOM kills this app hit
+    on Render's 512MB free tier. Peak memory here stays roughly bounded
+    to one model's footprint at a time instead of several."""
+    start = time.perf_counter()
+    session = None
+    try:
+        if strategy == "simsiam":
+            encoder_path = os.path.join(MODELS_DIR, f"{backbone}_simsiam_encoder.onnx")
+            weights_path = os.path.join(MODELS_DIR, f"{backbone}_simsiam_linear_weights.npz")
+            if not os.path.exists(encoder_path) or not os.path.exists(weights_path):
+                return None, None
+            session = ort.InferenceSession(encoder_path, sess_options=_low_memory_session_options())
+            weights = np.load(weights_path)
+            features = session.run(None, {"input": input_array})[0][0]
+            logits = features @ weights["coef"].T + weights["intercept"]
+            probs = softmax(logits)
+        else:
+            path = os.path.join(MODELS_DIR, f"{backbone}_{strategy}_classifier.onnx")
+            if not os.path.exists(path):
+                return None, None
+            session = ort.InferenceSession(path, sess_options=_low_memory_session_options())
+            outputs = session.run(None, {"input": input_array})[0]
+            probs = softmax(outputs[0])
+    finally:
+        # Explicitly drop the reference so CPython's refcounting frees the
+        # session's memory immediately, rather than waiting for it to be
+        # evicted from a cache it was never added to.
+        del session
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
     result = {CLASS_NAMES[i]: float(probs[i]) for i in range(len(CLASS_NAMES))}
     return result, elapsed_ms
 
@@ -325,7 +368,8 @@ def compare_all_models(pil_image):
     for backbone in BACKBONES:
         cards = []
         for strategy in STRATEGIES:
-            result, elapsed_ms = run_single_inference(backbone, strategy, input_array)
+            result, elapsed_ms = run_single_inference_ephemeral(backbone, strategy, input_array)
+            gc.collect()  # cheap insurance: force reclaiming the just-freed session now
             if result is None:
                 cards.append(f"""
                 <div class="glass-card compare-card">
@@ -954,7 +998,7 @@ with gr.Blocks(
     strategy_dropdown.change(fn=predict, inputs=predict_inputs, outputs=predict_outputs)
 
     gr.HTML(
-        '<div class="app-footer">Made with \u2764\ufe0f using PyTorch &bull; Gradio &bull; Hugging Face<br>'
+        '<div class="app-footer">Made with \u2764\ufe0f using PyTorch, ONNX Runtime &amp; Gradio<br>'
         '<a href="https://github.com/Abeer-24/low-data-ssl" target="_blank">GitHub</a> | '
         '<a href="https://github.com/Abeer-24/low-data-ssl/blob/main/PROJECT_DOCUMENTATION.md" target="_blank">Documentation</a></div>'
     )
