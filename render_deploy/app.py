@@ -968,7 +968,11 @@ with gr.Blocks(
         with gr.Tab("Compare All", id="compare"):
             gr.Markdown(
                 "Upload one image and see all 12 backbone x strategy "
-                "combinations classify it, grouped by backbone."
+                "combinations classify it, grouped by backbone.\n\n"
+                "*Note: this runs all 12 models in one request, which can "
+                "occasionally hit memory limits on this app's free hosting "
+                "tier. If it hangs or errors, try again in a moment, or "
+                "use the Classify tab for a single model instead.*"
             )
             compare_image_input = gr.Image(
                 type="pil", label="Upload an image", height=280,
