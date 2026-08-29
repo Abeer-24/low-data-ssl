@@ -197,8 +197,8 @@ custom tracking dashboard.
 
 Deployment is treated as a design constraint decided *before* training, not
 bolted on afterward. **Note: the original plan below (single fixed model,
-Hugging Face Spaces) changed after initial deployment — see the update at
-the end of this section for what's actually live.**
+Hugging Face Spaces) changed twice after initial deployment — see the
+updates below for what's actually live.**
 
 - **Model export:** ONNX — decouples serving from training code, avoids
   environment/version mismatches. All 12 backbone × strategy combinations
@@ -211,23 +211,87 @@ the end of this section for what's actually live.**
   cannot run on it regardless of effort. Grad-CAM remains a static figure
   in this documentation.
 
-**Update — what's actually deployed:** the original single-model plan was
-revisited after deployment. The live app (Render.com, not Hugging Face
-Spaces — see note below) lets visitors choose *any* of the 12 trained
-backbone × strategy combinations and classify images live, plus a
-"Compare All" view that runs all 12 on one uploaded image simultaneously,
-grouped by backbone. This reverses the original "single deployed model,
-no live comparison" decision — live comparison turned out to be worth the
-added complexity, since it directly demonstrates the project's actual
-thesis (comparing strategies) rather than requiring the visitor to trust
-a single number.
+**Update 1 — what's actually deployed:** the original single-model plan
+was revisited after deployment. The live app lets visitors choose *any*
+of the 12 trained backbone × strategy combinations and classify images
+live. This reverses the original "single deployed model, no live
+comparison" decision — live comparison turned out to be worth the added
+complexity, since it directly demonstrates the project's actual thesis
+(comparing strategies) rather than requiring the visitor to trust a
+single number.
+
+**Current app structure**, after a full UI redesign (a Dashboard tab
+existed at one point and was later removed in favor of folding its
+useful content into Home):
+
+- **Home** — project motivation, quick navigation to Classify and Compare
+  All, summary stat cards (best combination, smallest/fastest model), and
+  a filterable, ranked comparison of all 12 combinations with progress
+  bars, color-coded metrics, and small accuracy-trend sparklines built
+  from the real per-percentage results.
+- **Classify** — pick a backbone and strategy, upload an image, get a
+  prediction with a confidence gauge, a model info card, and a downloadable
+  PDF report.
+- **Compare All** — upload one image, see all 12 combinations classify it
+  at once, grouped by backbone.
+- **History** — this session's past predictions, with thumbnails.
 
 **Hosting note:** Hugging Face Spaces changed its pricing during this
 project — as of mid-2026, creating a Space with the Gradio or Docker SDK
 requires a paid plan; only Static Spaces remain free. The app is deployed
 on **Render.com's free tier** instead (no credit card required; the
 service sleeps after 15 minutes of inactivity, with a ~30-60s cold start
-on the next visit).
+on the next visit — see Update 2 for how this was mitigated).
+
+**Update 2 — a real production incident and how it was fixed.** Shortly
+after adding the Compare All feature, the live app began crashing
+repeatedly. Render's own event log gave a direct, unambiguous cause:
+`Ran out of memory (used over 512MB) while running your code` — later
+crashes showed the generic `Exited with status 137` (a Linux `SIGKILL`,
+consistent with an OOM kill that leaves no application-side traceback,
+since a killed process cannot log its own death).
+
+Root cause: the app's model-loading cache was an unbounded Python
+dictionary. There are 12 possible models (9 classifiers + 3 SimSiam
+encoder/weights pairs); Compare All touches all 12 in a single request,
+and once loaded, none were ever released. Three fixes were applied, in
+order, based on evidence rather than a single guess:
+
+1. Bounded the cache to a small LRU (max 3 entries) instead of unbounded
+   growth — reduced but did not eliminate the crashes (confirmed by a
+   second OOM event after this fix was live).
+2. Capped ONNX Runtime's thread pool and disabled its memory-arena
+   pre-allocation (`intra_op_num_threads=1`, `enable_cpu_mem_arena=False`)
+   — standard practice for constrained containers, but still insufficient
+   on its own (a third crash occurred after this fix).
+3. Made Compare All bypass the shared cache entirely: each of the 12
+   models is loaded, used once, and explicitly freed (`del` plus a manual
+   `gc.collect()`) before the next one loads, since Compare All never
+   benefits from caching (each model is used exactly once per request) and
+   caching there only added risk. This held stable across repeated testing
+   afterward.
+
+A fourth, unrelated regression happened while trying to add a lightweight
+`/health` endpoint (to support keep-alive pinging, below): mounting the
+Gradio app onto a separate FastAPI instance (`gr.mount_gradio_app`) is a
+documented pattern, but a known Gradio issue causes the app's theme/CSS to
+fail to load correctly behind a reverse proxy (exactly Render's setup) —
+the deployed site visibly reverted to an unstyled default look. This was
+reverted in favor of the original `demo.launch()` call, and the health-check
+goal was solved a different way (below) without touching how the app
+serves itself.
+
+**Keep-alive:** Render's free tier sleeps after 15 minutes of inactivity.
+A free external pinger keeps the service warm. The first attempt used
+cron-job.org, which repeatedly failed with "Response data too big" — its
+free tier hard-caps read output at 64 KB, far smaller than a full Gradio
+page, and this held true even after switching the request method to
+`HEAD` (HTTP requires a HEAD response to report the same `Content-Length`
+a GET would, so the size as measured didn't actually change). The fix was
+switching to **UptimeRobot**, whose free-tier HTTP monitors default to
+`HEAD` requests with an 8 MB size limit — a tool actually built for
+uptime-pinging rather than for reading a script's output, which turned
+out to matter.
 
 ---
 
@@ -236,24 +300,44 @@ on the next visit).
 ```
 LowDataSSL/
 ├── data/
-│   └── stl10_loader.py        # dataset download + percentage-split logic
+│   └── stl10_loader.py             # dataset download + percentage-split logic
 ├── training/
-│   ├── simsiam.py              # SSL pretraining
-│   ├── baseline.py              # supervised from scratch
-│   └── augmented.py             # supervised + augmentation
+│   ├── simsiam.py                   # SSL pretraining (supports --lr override)
+│   ├── baseline.py                   # supervised from scratch
+│   ├── augmented.py                   # supervised + augmentation
+│   ├── imagenet_transfer.py            # ImageNet fine-tuning
+│   └── linear_probe.py                  # frozen-embedding logistic regression
 ├── evaluation/
-│   ├── linear_probe.py          # frozen-embedding logistic regression
-│   └── metrics.py                # precision/recall/F1/confusion matrix
+│   ├── efficiency.py                     # params/size/inference-time/FPS profiling
+│   ├── gradcam.py                         # static Grad-CAM figure (not live, see Section 8)
+│   ├── compute_full_metrics.py             # precision/recall/F1 for all 12 saved models
+│   └── export_examples.py                   # sample test images for the app's example gallery
 ├── export/
-│   └── to_onnx.py                # model export for deployment
-├── app/
-│   └── gradio_app.py              # HF Spaces deployment
-├── notebooks/
-│   └── results_analysis.ipynb      # accuracy-vs-label% plots
+│   └── to_onnx.py                             # generic backbone x strategy ONNX export
+├── render_deploy/                              # the actual deployed app (Render.com)
+│   ├── app.py
+│   ├── requirements.txt
+│   ├── *.onnx, *.npz                            # all 12 exported models
+│   ├── results/                                  # copies of accuracy/efficiency/metrics JSON
+│   └── examples/                                  # sample images for the Classify tab
+├── hf_space/                                       # an earlier, now-unused deployment attempt --
+│                                                     # kept for reference; the project moved to
+│                                                     # Render after Hugging Face Spaces' pricing
+│                                                     # changed (Section 8)
+├── configs/
+│   ├── seeds.yaml                                    # single source of truth for all seeds
+│   └── wandb_config.yaml
 ├── checkpoints/
-├── docs/
-│   └── PROJECT_DOCUMENTATION.md (this file)
-└── README.md
+│   ├── simsiam/                                        # pretrained encoders (gitignored)
+│   ├── downstream/                                      # accuracy/metrics JSON (tracked) +
+│   │                                                      model weights (gitignored)
+│   ├── deploy/                                            # the 12 exported deployment models
+│   │                                                        (gitignored; copied into render_deploy/)
+│   └── figures/                                            # static Grad-CAM figure
+├── .gitignore
+├── LICENSE
+├── README.md
+└── PROJECT_DOCUMENTATION.md (this file)
 ```
 
 ---
